@@ -1,3 +1,4 @@
 locust>=2.31,<3
 pytest>=8,<9
 PyYAML>=6,<7
+matplotlib>=3.8,<4
