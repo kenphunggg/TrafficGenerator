@@ -1,0 +1,9 @@
+{
+  "service": "{service}",
+  "service_base": "{service_base}",
+  "function_id": "{function_id}",
+  "minute": "{minute}",
+  "arrival_offset_sec": "{arrival_offset_sec}",
+  "request_index": "{request_index}",
+  "request_id": "{request_id}"
+}

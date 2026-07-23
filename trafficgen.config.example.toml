@@ -1,0 +1,70 @@
+# TrafficGenerator runtime config example.
+# Copy to trafficgen.config.toml for local runs, then edit the values below.
+# The generated implementation should load this TOML file first, then apply
+# optional .env or process-environment overrides for automation.
+
+[trace]
+# CSV trace to replay. Known traces live in datatrace/.
+file = "datatrace/day_night.csv"
+
+# Leave unset to replay the whole trace.
+# start_minute = 0
+# end_minute = 1439
+
+[traffic]
+# Replay one trace minute as 60 real seconds; there is no speedup setting.
+scale = 0.3
+
+# Set true to print the schedule without sending HTTP requests.
+dry_run = false
+
+# Set for deterministic arrival offsets across repeated runs.
+# random_seed = 12345
+
+[target]
+# Base Knative Service name. With suffix routing enabled, this becomes
+# measure-yolo-001, measure-yolo-002, and so on.
+service_base = "measure-yolo"
+
+# Optional map from trace function_id/app_name to service base names.
+# service_map_file = "service-map.json"
+
+namespace = "serverless"
+path = "/detect/local"
+
+# URL template fields include service, service_base, namespace, path,
+# function_id, minute, arrival_offset_sec, request_index, and request_id.
+url_template = "http://{service}.{namespace}.svc.cluster.local{path}"
+
+[routing]
+# true avoids routing a new request to an alias that is still processing.
+increase_service = true
+suffix_template = "{service_base}-{index:03d}"
+request_timeout_sec = 300
+
+# Leave unset for a conservative dry-run alias estimate. Set this when you want
+# dry-run output to model warm alias reuse with an assumed response duration.
+# dry_run_assumed_service_time_sec = 1.0
+
+[request]
+# TrafficGenerator sends POST only.
+method = "POST"
+
+# Optional JSON file containing static request headers.
+# headers_file = "payloads/headers.json"
+
+request_id_header = "X-Trafficgen-Request-Id"
+include_request_id_in_body = true
+request_id_body_field = "request_id"
+content_type = "application/json"
+
+# Choose at most one body source. If none is set, the generator sends
+# {"request_id": <id>} as the minimal JSON body.
+# body = '{"image":"local"}'
+# body_file = "payloads/body.json"
+# body_template_file = "payloads/body.template.json"
+
+[logging]
+dir = "logs"
+log_response_body = true
+max_body_log_bytes = 65536

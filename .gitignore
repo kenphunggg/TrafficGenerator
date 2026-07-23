@@ -1,5 +1,5 @@
 .env
-trafficgen.config.toml
+.venv/*
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -7,3 +7,4 @@ __pycache__/
 logs/*.jsonl
 generated-ksvc/
 generateKsvc/nodes.json
+tests/*
