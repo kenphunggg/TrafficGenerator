@@ -1,0 +1,9 @@
+.env
+trafficgen.config.toml
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+logs/*.jsonl
+generated-ksvc/
+generateKsvc/nodes.json
