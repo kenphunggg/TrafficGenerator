@@ -15,6 +15,32 @@ measure-yolo-010
 It can also pre-pull every image used by the template on every configured node
 before applying any Knative Service.
 
+For normal TrafficGenerator experiments, configure this through the central
+`trafficgen.config.toml` file instead of running this script separately:
+
+```toml
+[ksvc_aliases]
+enabled = true
+template = "generateKsvc/templates/measure-yolo.yaml"
+count = 10
+output_dir = "generated-ksvc"
+pull_images = true
+nodes = "generateKsvc/nodes.json"
+create_namespace = true
+apply = true
+```
+
+Then run:
+
+```bash
+python -m traffic_generator experiment run \
+  --config trafficgen.config.toml \
+  --configuration full-nimbus
+```
+
+The direct commands below are the manual equivalent of the `[ksvc_aliases]`
+section.
+
 ## Node Inventory
 
 Use `generateKsvc/nodes.json` for the nodes that should pre-pull container
@@ -166,4 +192,5 @@ metadata:
 ```
 
 For TrafficGenerator suffix routing, the generated service names must match
-`routing.suffix_template` in `trafficgen.config.toml`.
+`routing.suffix_template` in `trafficgen.config.toml`. The number of generated
+services should match `[ksvc_aliases].count` in the same central config.
