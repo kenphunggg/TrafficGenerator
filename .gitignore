@@ -8,3 +8,6 @@ logs/*.jsonl
 generated-ksvc/
 generateKsvc/nodes.json
 tests/*
+!tests/test_metrics_*.py
+results/*
+temp/*

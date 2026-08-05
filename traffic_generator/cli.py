@@ -46,7 +46,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    if raw_args[:1] == ["metrics"]:
+        from .metrics_cli import main as metrics_main
+
+        return metrics_main(raw_args[1:])
+    if raw_args[:1] == ["experiment"]:
+        from .experiment_cli import main as experiment_main
+
+        return experiment_main(raw_args[1:])
+
+    args = build_parser().parse_args(raw_args)
     config = load_config(args.config)
     if args.dry_run:
         config = replace(config, traffic=replace(config.traffic, dry_run=True))

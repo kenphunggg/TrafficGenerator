@@ -38,6 +38,8 @@ url_template = "http://{service}.{namespace}.svc.cluster.local{path}"
 
 [routing]
 # true avoids routing a new request to an alias that is still processing.
+# This controls target service-name selection only. Matching cloned KServices
+# must exist before replay starts; configure that under [ksvc_aliases].
 increase_service = true
 suffix_template = "{service_base}-{index:03d}"
 request_timeout_sec = 300
@@ -45,6 +47,26 @@ request_timeout_sec = 300
 # Leave unset for a conservative dry-run alias estimate. Set this when you want
 # dry-run output to model warm alias reuse with an assumed response duration.
 # dry_run_assumed_service_time_sec = 1.0
+
+[ksvc_aliases]
+# Optional KService alias preparation for `python -m traffic_generator experiment run`.
+# This is where the cloned KService count is configured.
+enabled = true
+template = "generateKsvc/templates/measure-yolo.yaml"
+count = 10
+output_dir = "generated-ksvc"
+
+# Defaults align with [target].service_base and [routing].suffix_template.
+# base_name = "measure-yolo"
+# suffix_template = "{base}-{index:03d}"
+# namespace = "serverless"
+
+# When enabled and apply=true, the runner checks whether all expected aliases
+# already exist and skips generation/apply when they do.
+pull_images = false
+# nodes = "generateKsvc/nodes.json"
+create_namespace = true
+apply = true
 
 [request]
 # TrafficGenerator sends POST only.
@@ -68,3 +90,36 @@ content_type = "application/json"
 dir = "logs"
 log_response_body = true
 max_body_log_bytes = 65536
+
+[metrics]
+# Offline aggregation and plotting settings. Per-run experiment outputs are
+# written into results/<configuration>/<run-id>/. These shared directories are
+# used only when aggregating/plotting all discovered runs without --run-dir.
+results_dir = "results"
+output_dir = "results/metrics"
+plots_dir = "results/plots"
+step_sec = 60
+warm_slo_ms = 1500
+cold_slo_ms = 15000
+request_timeout_sec = 300
+
+[metrics.configuration_labels]
+static-knative = "Static Knative"
+fixed-boost = "Fixed Startup Boost"
+full-nimbus = "Full Nimbus"
+
+[metrics.prometheus]
+url = "http://localhost:9090"
+namespace = "serverless"
+service_base = "measure-yolo"
+service_regex = "measure-yolo.*"
+
+[metrics.prometheus.queries]
+ready_pods = 'sum(kube_pod_status_ready{namespace="$namespace",condition="true",pod=~"$service_regex"})'
+pending_pods = 'sum(kube_pod_status_phase{namespace="$namespace",phase="Pending",pod=~"$service_regex"})'
+allocated_cpu_cores = 'sum(kube_pod_container_resource_requests{namespace="$namespace",resource="cpu",pod=~"$service_regex"})'
+actual_cpu_cores = 'sum(rate(container_cpu_usage_seconds_total{namespace="$namespace",pod=~"$service_regex",container!="",container!="POD"}[1m]))'
+
+# Optional. Leave blank until Nimbus exports stable mode/tier metrics.
+nimbus_mode = ""
+nimbus_tier = ""

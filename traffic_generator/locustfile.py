@@ -90,6 +90,9 @@ class TraceReplayUser(HttpUser):
 
         if greenlets:
             gevent.joinall(greenlets)
+        runner = getattr(self.environment, "runner", None)
+        if runner is not None:
+            runner.quit()
         raise StopUser()
 
     def _set_client_base_url(self, host: str) -> None:
