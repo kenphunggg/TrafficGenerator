@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -47,7 +47,7 @@ def load_ksvc_alias_config(path: str | Path) -> KsvcAliasConfig:
     target = _section(raw, "target")
     routing = _section(raw, "routing")
     count = int(aliases.get("count", 0))
-    enabled = parse_bool(aliases.get("enabled", count > 0))
+    enabled = parse_bool(aliases.get("enabled", False))
 
     config = KsvcAliasConfig(
         enabled=enabled,
@@ -77,8 +77,6 @@ def load_ksvc_alias_config(path: str | Path) -> KsvcAliasConfig:
 def validate_ksvc_alias_config(config: KsvcAliasConfig) -> KsvcAliasConfig:
     if not config.enabled:
         return config
-    if config.count < 1:
-        raise ValueError("ksvc_aliases.count must be >= 1 when aliases are enabled")
     if config.template is None:
         raise ValueError("ksvc_aliases.template is required when aliases are enabled")
     if config.pull_images and config.nodes is None:
@@ -86,9 +84,17 @@ def validate_ksvc_alias_config(config: KsvcAliasConfig) -> KsvcAliasConfig:
     return config
 
 
+def with_ksvc_alias_count(config: KsvcAliasConfig, count: int) -> KsvcAliasConfig:
+    if count < 1:
+        raise ValueError("computed KService alias count must be >= 1")
+    return replace(config, count=count)
+
+
 def expected_ksvc_alias_names(config: KsvcAliasConfig) -> list[str]:
     if not config.enabled:
         return []
+    if config.count < 1:
+        raise ValueError("KService alias count has not been computed")
     if not config.base_name:
         raise ValueError(
             "ksvc_aliases.base_name or target.service_base is required to preflight aliases"
@@ -141,6 +147,8 @@ def build_generate_ksvc_command(config: KsvcAliasConfig) -> list[str]:
         return []
     if config.template is None:
         raise ValueError("ksvc_aliases.template is required when aliases are enabled")
+    if config.count < 1:
+        raise ValueError("KService alias count has not been computed")
 
     script = Path(__file__).resolve().parents[1] / "generateKsvc" / "generate_ksvc.py"
     command = [

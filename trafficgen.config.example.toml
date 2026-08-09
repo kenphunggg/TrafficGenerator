@@ -44,16 +44,25 @@ increase_service = true
 suffix_template = "{service_base}-{index:03d}"
 request_timeout_sec = 300
 
-# Leave unset for a conservative dry-run alias estimate. Set this when you want
-# dry-run output to model warm alias reuse with an assumed response duration.
-# dry_run_assumed_service_time_sec = 1.0
+# Set this to model warm alias reuse with an assumed response duration.
+# If omitted, planning falls back to request_timeout_sec and becomes conservative.
+# IMPORTANT: this is only for clone-count planning. Keep request_timeout_sec
+# high enough for cold starts, but set this near expected p95 request lifetime
+# so alias planning does not assume every request occupies a pod for 300s.
+dry_run_assumed_service_time_sec = 30
+
+# Runtime safety cap for suffix routing. The experiment runner sets this
+# automatically from the computed alias count. Direct Locust runs can set it
+# here or with MAX_KSVC_ALIASES to wait for in-range aliases instead of calling
+# KServices that were not created.
+# max_aliases = 4
 
 [ksvc_aliases]
 # Optional KService alias preparation for `python -m traffic_generator experiment run`.
-# This is where the cloned KService count is configured.
+# The experiment runner computes the clone count from the selected trace,
+# traffic scale, and assumed request busy time.
 enabled = true
 template = "generateKsvc/templates/measure-yolo.yaml"
-count = 10
 output_dir = "generated-ksvc"
 
 # Defaults align with [target].service_base and [routing].suffix_template.

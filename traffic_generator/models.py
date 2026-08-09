@@ -44,6 +44,7 @@ class RoutingConfig:
     suffix_template: str = "{service_base}-{index:03d}"
     request_timeout_sec: float = 300.0
     dry_run_assumed_service_time_sec: float | None = None
+    max_aliases: int | None = None
 
 
 @dataclass(frozen=True)

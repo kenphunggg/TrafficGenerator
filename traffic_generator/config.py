@@ -86,6 +86,7 @@ ENV_TO_KEY: dict[str, tuple[str, EnvCaster]] = {
         "routing.dry_run_assumed_service_time_sec",
         parse_optional_float,
     ),
+    "MAX_KSVC_ALIASES": ("routing.max_aliases", parse_optional_int),
     "REQUEST_METHOD": ("request.method", str),
     "HEADERS_FILE": ("request.headers_file", parse_optional_path),
     "REQUEST_ID_HEADER": ("request.request_id_header", str),
@@ -266,6 +267,7 @@ def _build_config(raw: Mapping[str, Any], config_path: Path) -> ReplayConfig:
             dry_run_assumed_service_time_sec=_optional_float(
                 routing.get("dry_run_assumed_service_time_sec")
             ),
+            max_aliases=_optional_int(routing.get("max_aliases")),
         ),
         request=RequestConfig(
             method=str(request.get("method", "POST")).upper(),
@@ -333,6 +335,8 @@ def validate_config(config: ReplayConfig) -> ReplayConfig:
         and config.routing.dry_run_assumed_service_time_sec < 0
     ):
         raise ValueError("routing.dry_run_assumed_service_time_sec must be >= 0")
+    if config.routing.max_aliases is not None and config.routing.max_aliases < 1:
+        raise ValueError("routing.max_aliases must be >= 1")
     if not config.target.path.startswith("/"):
         raise ValueError("target.path must start with '/'")
     if config.logging.max_body_log_bytes < 0:

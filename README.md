@@ -1,17 +1,11 @@
-# TrafficGenerator User Guide
+# TrafficGenerator
 
-TrafficGenerator replays minute-level request traces as HTTP POST traffic. It can
-read CSV traces, scale request counts, spread arrivals across each real-time
-minute, optionally route concurrent requests across suffixed Knative Service
-aliases, and write request/response logs.
+TrafficGenerator replays trace traffic against Knative services and then collects
+Prometheus metrics for the same run. The normal workflow is one command: prepare
+KService aliases if needed, run Locust, collect CPU/pod metrics, aggregate CSVs,
+and render plots.
 
-## Requirements
-
-- Python 3.11 or newer
-- Access to the target HTTP services or Kubernetes cluster network
-- Python dependencies from `requirements.txt`
-
-Install dependencies:
+## Setup
 
 ```bash
 python -m venv .venv
@@ -19,255 +13,116 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## 1. Create A Config File
+Edit `trafficgen.config.toml` before running. The main settings are:
 
-Copy the example config:
+- `[trace]`: trace file and minute range.
+- `[traffic]`: traffic scale.
+- `[target]`: service base, namespace, and request path.
+- `[ksvc_aliases]`: template and whether to apply computed KService aliases.
+- `[metrics.prometheus]`: Prometheus URL and pod/service regex.
+
+## Main Run Command
+
+This is the command normally used:
 
 ```bash
-cp trafficgen.config.example.toml trafficgen.config.toml
+source .venv/bin/activate
+
+python -m traffic_generator experiment run \
+  --config trafficgen.config.toml \
+  --configuration full-nimbus \
+  --run-id run-01
 ```
 
-Edit `trafficgen.config.toml`.
+What it does:
 
-Minimum important settings:
+1. Computes the required alias count from peak scaled RPS and assumed busy time.
+   Configure `routing.dry_run_assumed_service_time_sec`; if it is unset, the
+   runner falls back to `routing.request_timeout_sec` and may overestimate.
+2. Checks whether those computed KService aliases already exist.
+3. Creates/applies missing aliases when `[ksvc_aliases].enabled = true` and
+   `apply = true`, after user confirmation.
+4. Runs Locust traffic replay with `MAX_KSVC_ALIASES` set to the computed count,
+   so suffix routing waits for an in-range alias instead of calling an uncreated
+   KService.
+5. Waits for all requests to finish or timeout.
+6. Collects Prometheus metrics when available.
+7. Writes CSV metrics and plot images into the same run folder. If Locust
+   exits nonzero, the runner still writes artifacts from available logs and
+   returns the traffic failure code afterward.
 
-```toml
-[trace]
-file = "datatrace/day_night.csv"
+## Output Folder
 
-[traffic]
-scale = 0.3
-dry_run = false
-# random_seed = 12345
-
-[target]
-service_base = "measure-yolo"
-namespace = "serverless"
-path = "/detect/local"
-url_template = "http://{service}.{namespace}.svc.cluster.local{path}"
-
-[routing]
-increase_service = true
-suffix_template = "{service_base}-{index:03d}"
-request_timeout_sec = 300
-```
-
-Known trace files:
+For the command above, all run output is written here:
 
 ```text
-datatrace/day_night.csv
-datatrace/non_station.csv
+results/full-nimbus/run-01/
 ```
 
-Accepted CSV columns are either:
+Expected files:
 
-```csv
-minute,function_id,count
+```text
+requests.jsonl
+responses.jsonl
+prometheus_samples.jsonl
+summary_metrics.csv
+timeline.csv
+latency_samples.csv
+nimbus_tradeoff.png
+nimbus_timeline.png
+nimbus_latency_distribution.png
 ```
 
-or:
+Check the files with:
 
-```csv
-minute,app_name,requests_per_minute
+```bash
+ls -lah results/full-nimbus/run-01
+cat results/full-nimbus/run-01/summary_metrics.csv
 ```
 
-## 2. Validate The Config
+## Useful Checks
 
-Validate the config and trace without sending traffic:
+Validate config and trace without sending traffic:
 
 ```bash
 python -m traffic_generator --config trafficgen.config.toml --validate
 ```
 
-This prints the selected config, trace row count, and scheduled request count.
-
-## 3. Preview The Replay Schedule
-
-Print the first planned requests without sending HTTP traffic:
+Preview the replay schedule without sending traffic:
 
 ```bash
 python -m traffic_generator --config trafficgen.config.toml --dry-run --limit 20
 ```
 
-Print only the summary:
-
-```bash
-python -m traffic_generator --config trafficgen.config.toml --dry-run --limit 0
-```
-
-If `routing.increase_service = true`, dry-run can estimate alias reuse with an
-assumed service time:
+Estimate how many KService aliases are needed for a chosen busy time:
 
 ```bash
 python -m traffic_generator \
   --config trafficgen.config.toml \
   --dry-run \
-  --limit 20 \
-  --assumed-service-time-sec 1.0
+  --limit 0 \
+  --assumed-service-time-sec 30
 ```
 
-## 4. Run Traffic With Locust
+Use a realistic p95 request lifetime here. Do not use the request timeout unless
+that is truly how long one request keeps a pod busy.
 
-Run the replay in headless mode:
+## Recover Metrics For An Existing Run
+
+If a run has `requests.jsonl` and `responses.jsonl` but metrics are missing,
+run:
 
 ```bash
-locust \
-  -f traffic_generator/locustfile.py \
-  --headless \
-  -u 1 \
-  -r 1 \
-  --trafficgen-config trafficgen.config.toml
-```
-
-Use `-u 1 -r 1`. The generator is designed so one Locust user drives the full
-trace schedule. Individual HTTP requests are still sent concurrently when their
-scheduled times overlap.
-
-You can also select the config with an environment variable:
-
-```bash
-TRAFFICGEN_CONFIG=trafficgen.config.toml locust \
-  -f traffic_generator/locustfile.py \
-  --headless \
-  -u 1 \
-  -r 1
-```
-
-## 5. Check Logs
-
-By default logs are written to:
-
-```text
-logs/requests.jsonl
-logs/responses.jsonl
-```
-
-`requests.jsonl` records each planned/sent request, including request ID, trace
-minute, arrival offset, target service, URL, headers, and request body metadata.
-
-`responses.jsonl` records response status, timing, error details, optional
-response body, and parsed fields such as `request_id`, `pod_name`, `cold_start`,
-and `processing_time_ms` when the service returns them as JSON.
-
-## Common Config Changes
-
-Replay a smaller minute range:
-
-```toml
-[trace]
-file = "datatrace/day_night.csv"
-start_minute = 0
-end_minute = 10
-```
-
-Scale traffic down to 30%:
-
-```toml
-[traffic]
-scale = 0.3
-```
-
-Make schedule generation repeatable:
-
-```toml
-[traffic]
-random_seed = 12345
-```
-
-Send all requests to one service name without suffix aliases:
-
-```toml
-[routing]
-increase_service = false
-```
-
-Use suffixed service aliases:
-
-```toml
-[routing]
-increase_service = true
-suffix_template = "{service_base}-{index:03d}"
-```
-
-This targets services such as:
-
-```text
-measure-yolo-001
-measure-yolo-002
-measure-yolo-003
-```
-
-Use a custom JSON request body:
-
-```toml
-[request]
-body = '{"image":"local"}'
-include_request_id_in_body = true
-```
-
-Use a JSON body template:
-
-```toml
-[request]
-body_template_file = "payloads/example.template.json"
-```
-
-Template fields include:
-
-```text
-{service}
-{service_base}
-{namespace}
-{path}
-{function_id}
-{minute}
-{arrival_offset_sec}
-{scheduled_at_sec}
-{request_index}
-{request_id}
-{alias_index}
-{alias_decision}
+python -m traffic_generator metrics all \
+  --config trafficgen.config.toml \
+  --run-dir results/full-nimbus/run-01 \
+  --run-id run-01
 ```
 
 ## Notes
 
-- One trace minute is always replayed as 60 real seconds.
-- The request count for each trace row is scaled with half-up rounding.
-- Arrival times inside each minute are randomized while preserving the exact
-  scaled request count.
-- Only POST requests are supported by the current implementation.
-- Running Locust sends real HTTP traffic to the configured target.
-
-## Generate Knative Service Aliases
-
-TrafficGenerator suffix routing expects the target services to exist before the
-replay starts. Use `generateKsvc/generate_ksvc.py` to create aliases such as
-`measure-yolo-001` through `measure-yolo-010` from one Knative Service template.
-
-Generate files only:
-
-```bash
-python generateKsvc/generate_ksvc.py \
-  --template generateKsvc/templates/measure-yolo.yaml \
-  --count 10 \
-  --output-dir generated-ksvc
-```
-
-Pull the template image on nodes from `generateKsvc/nodes.json`, then apply each
-ksvc one at a time. Generated YAML keeps template fields and annotations as-is
-and changes only `metadata.name`. If the template has min scale 1, the script
-prints a warning and skips scale-to-zero waiting:
-
-```bash
-python generateKsvc/generate_ksvc.py \
-  --template generateKsvc/templates/measure-yolo.yaml \
-  --count 10 \
-  --nodes generateKsvc/nodes.json \
-  --output-dir generated-ksvc \
-  --pull-images \
-  --create-namespace \
-  --apply
-```
-
-See [generateKsvc/README.md](/home/thai/ken/ken_thesis/TrafficGenerator/generateKsvc/README.md)
-for the node JSON format, optional `sudo_password`, and all options.
+- Direct `locust ...` runs only generate request/response logs; they do not run
+  the Prometheus metrics pipeline.
+- One trace minute is replayed as 60 real seconds.
+- CPU and pod lines in `nimbus_timeline.png` need enough Prometheus samples. For
+  short tests, use a longer minute range or a smaller `[metrics].step_sec`.

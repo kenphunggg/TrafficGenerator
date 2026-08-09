@@ -22,7 +22,7 @@ For normal TrafficGenerator experiments, configure this through the central
 [ksvc_aliases]
 enabled = true
 template = "generateKsvc/templates/measure-yolo.yaml"
-count = 10
+# count is computed by `python -m traffic_generator experiment run`
 output_dir = "generated-ksvc"
 pull_images = true
 nodes = "generateKsvc/nodes.json"

@@ -4,6 +4,7 @@ from traffic_generator.ksvc_aliases import (
     build_generate_ksvc_command,
     expected_ksvc_alias_names,
     load_ksvc_alias_config,
+    with_ksvc_alias_count,
 )
 
 
@@ -21,7 +22,6 @@ suffix_template = "{service_base}-{index:03d}"
 [ksvc_aliases]
 enabled = true
 template = "generateKsvc/templates/measure-yolo.yaml"
-count = 12
 output_dir = "generated-ksvc"
 pull_images = true
 nodes = "generateKsvc/nodes.json"
@@ -33,7 +33,7 @@ apply = true
     config = load_ksvc_alias_config(config_file)
 
     assert config.enabled is True
-    assert config.count == 12
+    assert config.count == 0
     assert config.template == tmp_path / "generateKsvc/templates/measure-yolo.yaml"
     assert config.output_dir == tmp_path / "generated-ksvc"
     assert config.base_name == "measure-yolo"
@@ -45,7 +45,7 @@ apply = true
     assert config.apply is True
 
 
-def test_build_generate_ksvc_command_contains_count(tmp_path):
+def test_build_generate_ksvc_command_uses_computed_count(tmp_path):
     config_file = tmp_path / "trafficgen.config.toml"
     config_file.write_text(
         """
@@ -55,12 +55,11 @@ service_base = "measure-yolo"
 [ksvc_aliases]
 enabled = true
 template = "template.yaml"
-count = 5
 output_dir = "generated-ksvc"
 """.strip()
     )
 
-    config = load_ksvc_alias_config(config_file)
+    config = with_ksvc_alias_count(load_ksvc_alias_config(config_file), 5)
     command = build_generate_ksvc_command(config)
 
     assert "--count" in command
@@ -83,12 +82,11 @@ suffix_template = "{service_base}-{index:03d}"
 [ksvc_aliases]
 enabled = true
 template = "template.yaml"
-count = 3
 apply = true
 """.strip()
     )
 
-    config = load_ksvc_alias_config(config_file)
+    config = with_ksvc_alias_count(load_ksvc_alias_config(config_file), 3)
 
     assert expected_ksvc_alias_names(config) == [
         "measure-yolo-001",
@@ -118,11 +116,10 @@ namespace = "serverless"
 [ksvc_aliases]
 enabled = true
 template = "template.yaml"
-count = 1
 apply = true
 """.strip()
     )
-    config = load_ksvc_alias_config(config_file)
+    config = with_ksvc_alias_count(load_ksvc_alias_config(config_file), 1)
     calls = []
 
     class Completed:
@@ -143,4 +140,3 @@ apply = true
         "serverless",
         "measure-yolo-001",
     ]
-

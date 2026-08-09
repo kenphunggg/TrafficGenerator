@@ -8,11 +8,13 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/max-scale: "1"
         autoscaling.knative.dev/window: "10s"
     spec:
       # Forces pods to run on the specific node
       # nodeSelector:
       #   kubernetes.io/hostname: "cloud-node"
+      containerConcurrency: 1
       containers:
         - image: docker.io/lazyken/measure-yolo:v1@sha256:be174b603840e4d6c1aa46272ae0a525fa940ddeab485197996827be164cc51e
           ports:

@@ -60,7 +60,10 @@ class TraceReplayUser(HttpUser):
         resolver = ServiceResolver.from_config(config)
         events_to_send = iter_schedule(rows, config, service_resolver=resolver)
         router = (
-            InFlightSuffixRouter(config.routing.suffix_template)
+            InFlightSuffixRouter(
+                config.routing.suffix_template,
+                max_aliases=config.routing.max_aliases,
+            )
             if config.routing.increase_service
             else DirectRouter()
         )
@@ -114,7 +117,7 @@ class TraceReplayUser(HttpUser):
             )
             elapsed_ms = (time.perf_counter() - start) * 1000
             success = 200 <= response.status_code < 400
-            success_response = True
+            success_response = success
             logger.log_response(
                 request,
                 success=success,
