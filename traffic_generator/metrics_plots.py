@@ -36,10 +36,18 @@ def plot_metrics(
 
     selected_run_id = run_id or _select_representative_run(input_path)
     paths = {
+        "scenario_comparison": output_path / "nimbus_scenario_comparison.png",
         "tradeoff": output_path / "nimbus_tradeoff.png",
         "timeline": output_path / "nimbus_timeline.png",
+        "timeline_boxplot": output_path / "nimbus_timeline_boxplot.png",
         "latency_distribution": output_path / "nimbus_latency_distribution.png",
     }
+    plot_scenario_comparison(
+        input_path / "summary_metrics.csv",
+        paths["scenario_comparison"],
+        warm_slo_ms=config.warm_slo_ms,
+        cold_slo_ms=config.cold_slo_ms,
+    )
     plot_tradeoff(input_path / "summary_metrics.csv", paths["tradeoff"], config.warm_slo_ms)
     plot_timeline(
         input_path / "timeline.csv",
@@ -54,7 +62,86 @@ def plot_metrics(
         cold_slo_ms=config.cold_slo_ms,
         run_id=selected_run_id,
     )
+    plot_timeline_boxplot(
+        input_path / "timeline.csv",
+        input_path / "latency_samples.csv",
+        paths["timeline_boxplot"],
+        run_id=selected_run_id,
+    )
     return paths
+
+
+def plot_scenario_comparison(
+    summary_csv: Path,
+    output_path: Path,
+    *,
+    warm_slo_ms: float,
+    cold_slo_ms: float,
+) -> None:
+    rows = _read_csv(summary_csv)
+    by_config = _group_by_config(rows)
+    labels = list(by_config)
+
+    fig, axes = plt.subplots(2, 2, figsize=(13.6, 8.2))
+    flat_axes = list(axes.flat)
+    if not labels:
+        for ax in flat_axes:
+            ax.axis("off")
+        flat_axes[0].text(
+            0.5,
+            0.5,
+            "No summary rows found",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        fig.tight_layout()
+        fig.savefig(output_path, dpi=180)
+        plt.close(fig)
+        return
+
+    metric_specs = [
+        ("Success rate", "%", _success_rate_values(by_config), None, None),
+        ("Timeouts", "%", _metric_values(by_config, "timeout_pct"), None, None),
+        ("Warm p95 latency", "ms", _metric_values(by_config, "warm_p95_ms"), warm_slo_ms, None),
+        ("Cold p95 latency", "ms", _metric_values(by_config, "cold_p95_ms"), cold_slo_ms, None),
+    ]
+
+    for ax, (title, ylabel, values_by_label, reference, _unused) in zip(flat_axes, metric_specs):
+        values = [values_by_label.get(label) for label in labels]
+        numeric_values = [value for value in values if value is not None]
+        heights = [value if value is not None else 0 for value in values]
+        bars = ax.bar(
+            list(range(len(labels))),
+            heights,
+            color=[_color_for(label) for label in labels],
+            width=0.62,
+        )
+        for bar, value in zip(bars, values):
+            label = "n/a" if value is None else _compact_number(value)
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height(),
+                label,
+                ha="center",
+                va="bottom",
+                fontsize=8.5,
+            )
+        if reference is not None:
+            ax.axhline(reference, color="#111827", linestyle="--", linewidth=1)
+        if numeric_values:
+            ymax = max(numeric_values + ([reference] if reference is not None else []))
+            ax.set_ylim(0, ymax * 1.25 if ymax > 0 else 1)
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
+        ax.set_xticks(list(range(len(labels))))
+        ax.set_xticklabels([_short_label(label) for label in labels])
+        ax.grid(True, axis="y", color="#d1d5db", linewidth=0.7, alpha=0.8)
+
+    fig.suptitle("Three-scenario comparison", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
 
 
 def plot_tradeoff(summary_csv: Path, output_path: Path, warm_slo_ms: float) -> None:
@@ -174,13 +261,6 @@ def plot_timeline(
     minutes = [_float(row.get("minute")) or 0.0 for row in reference_rows]
     if reference_rows:
         axes[0].plot(minutes, _series(reference_rows, "offered_rps"), label="offered", color="#111827")
-        axes[0].bar(
-            minutes,
-            _series(reference_rows, "inflight"),
-            label="in-flight workload",
-            color="#93c5fd",
-            alpha=0.5,
-        )
     for configuration, config_rows in by_config.items():
         axes[0].plot(
             _minutes(config_rows),
@@ -304,6 +384,52 @@ def plot_latency_distribution(
     plt.close(fig)
 
 
+def plot_timeline_boxplot(
+    timeline_csv: Path,
+    latency_csv: Path,
+    output_path: Path,
+    *,
+    run_id: str | None,
+) -> None:
+    timeline_rows = _filter_run(_read_csv(timeline_csv), run_id)
+    latency_rows = _filter_run(_read_csv(latency_csv), run_id)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15.6, 8.8))
+    specs = [
+        (
+            "Warm latency",
+            "ms",
+            _group_numeric_values(
+                latency_rows,
+                "latency_ms",
+                row_filter=lambda row: row.get("state") == "warm",
+            ),
+        ),
+        (
+            "Cold latency",
+            "ms",
+            _group_numeric_values(
+                latency_rows,
+                "latency_ms",
+                row_filter=lambda row: row.get("state") == "cold",
+            ),
+        ),
+        ("Ready pods", "pods", _group_numeric_values(timeline_rows, "ready_pods")),
+        ("Pending pods", "pods", _group_numeric_values(timeline_rows, "pending_pods")),
+        ("Allocated CPU", "cores", _group_numeric_values(timeline_rows, "allocated_cpu_cores")),
+        ("Actual CPU", "cores", _group_numeric_values(timeline_rows, "actual_cpu_cores")),
+    ]
+
+    for ax, (title, ylabel, values_by_config) in zip(axes.flat, specs):
+        _draw_boxplot(ax, values_by_config, title=title, ylabel=ylabel)
+
+    title_run = f" ({run_id})" if run_id else ""
+    fig.suptitle(f"Nimbus timeline box plot comparison{title_run}", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="") as handle:
         return list(csv.DictReader(handle))
@@ -342,6 +468,160 @@ def _select_representative_run(input_dir: Path) -> str | None:
         if run_ids:
             return run_ids[0]
     return None
+
+
+def _metric_values(
+    by_config: dict[str, list[dict[str, Any]]],
+    column: str,
+) -> dict[str, float | None]:
+    return {
+        label: _median(values) if (values := _numeric_column(config_rows, column)) else None
+        for label, config_rows in by_config.items()
+    }
+
+
+def _success_rate_values(
+    by_config: dict[str, list[dict[str, Any]]],
+) -> dict[str, float | None]:
+    result: dict[str, float | None] = {}
+    for label, config_rows in by_config.items():
+        values = []
+        for row in config_rows:
+            successful = _float(row.get("successful_requests"))
+            total = _float(row.get("total_requests"))
+            if successful is None or total is None or total <= 0:
+                continue
+            values.append(successful / total * 100)
+        result[label] = _median(values) if values else None
+    return result
+
+
+def _group_numeric_values(
+    rows: list[dict[str, Any]],
+    column: str,
+    *,
+    row_filter=None,
+) -> dict[str, list[float]]:
+    by_config = _group_by_config(rows)
+    values_by_config: dict[str, list[float]] = {}
+    for configuration, config_rows in by_config.items():
+        selected_rows = [
+            row
+            for row in config_rows
+            if row_filter is None or row_filter(row)
+        ]
+        values_by_config[configuration] = _numeric_column(selected_rows, column)
+    return values_by_config
+
+
+def _draw_boxplot(
+    ax: plt.Axes,
+    values_by_config: dict[str, list[float]],
+    *,
+    title: str,
+    ylabel: str,
+) -> None:
+    labels = [label for label, values in values_by_config.items() if values]
+    data = [values_by_config[label] for label in labels]
+
+    ax.set_title(title)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, axis="y", color="#d1d5db", linewidth=0.7, alpha=0.8)
+
+    if not data:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=11)
+        return
+
+    box = ax.boxplot(
+        data,
+        patch_artist=True,
+        showmeans=True,
+        meanline=False,
+        showfliers=False,
+        widths=0.58,
+    )
+    for patch, label in zip(box["boxes"], labels):
+        color = _color_for(label)
+        patch.set_facecolor(color)
+        patch.set_alpha(0.28)
+        patch.set_edgecolor(color)
+        patch.set_linewidth(1.3)
+    for whisker in box["whiskers"]:
+        whisker.set_color("#4b5563")
+    for cap in box["caps"]:
+        cap.set_color("#4b5563")
+    for median in box["medians"]:
+        median.set_color("#111827")
+        median.set_linewidth(1.5)
+    for mean in box["means"]:
+        mean.set_marker("o")
+        mean.set_markerfacecolor("#111827")
+        mean.set_markeredgecolor("#111827")
+        mean.set_markersize(3.8)
+
+    ax.set_xticks(list(range(1, len(labels) + 1)))
+    ax.set_xticklabels([_short_label(label) for label in labels])
+
+    y_limits = _visible_boxplot_ylim(data)
+    if y_limits is not None:
+        ax.set_ylim(*y_limits)
+
+
+def _visible_boxplot_ylim(data: list[list[float]]) -> tuple[float, float] | None:
+    lows: list[float] = []
+    highs: list[float] = []
+    for values in data:
+        if not values:
+            continue
+        ordered = sorted(values)
+        q1 = _percentile(ordered, 25)
+        q3 = _percentile(ordered, 75)
+        iqr = q3 - q1
+        low_fence = q1 - (1.5 * iqr)
+        high_fence = q3 + (1.5 * iqr)
+        visible = [value for value in ordered if low_fence <= value <= high_fence]
+        if not visible:
+            visible = ordered
+        lows.append(min(visible))
+        highs.append(max(visible))
+    if not lows or not highs:
+        return None
+
+    ymin = min(lows)
+    ymax = max(highs)
+    if ymin >= 0:
+        ymin = 0
+    if ymax == ymin:
+        pad = max(1.0, abs(ymax) * 0.15)
+        return ymin - pad, ymax + pad
+    pad = max(1.0, (ymax - ymin) * 0.12, abs(ymax) * 0.03)
+    return ymin, ymax + pad
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        raise ValueError("percentile requires at least one value")
+    if len(values) == 1:
+        return values[0]
+    position = (len(values) - 1) * (percentile / 100)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return values[int(position)]
+    lower_value = values[lower]
+    upper_value = values[upper]
+    return lower_value + ((upper_value - lower_value) * (position - lower))
+
+
+def _compact_number(value: float) -> str:
+    if abs(value) >= 1000:
+        return f"{value:,.0f}"
+    if float(value).is_integer():
+        return str(int(value))
+    if abs(value) >= 100:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
 
 
 def _numeric_column(rows: list[dict[str, Any]], column: str) -> list[float]:

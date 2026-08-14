@@ -1,7 +1,7 @@
 import csv
 
 from traffic_generator.metrics_config import MetricsConfig
-from traffic_generator.metrics_plots import plot_metrics
+from traffic_generator.metrics_plots import _visible_boxplot_ylim, plot_metrics
 
 
 def test_plot_metrics_creates_pngs(tmp_path):
@@ -91,3 +91,10 @@ def _write_csv(path, rows):
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+
+
+def test_visible_boxplot_ylim_ignores_hidden_fliers():
+    ymin, ymax = _visible_boxplot_ylim([[800, 900, 1000, 1100, 1200, 300000]])
+
+    assert ymin == 0
+    assert ymax < 5000

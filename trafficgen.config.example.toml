@@ -1,96 +1,102 @@
 # TrafficGenerator runtime config example.
-# Copy to trafficgen.config.toml for local runs, then edit the values below.
-# The generated implementation should load this TOML file first, then apply
-# optional .env or process-environment overrides for automation.
+# Copy to trafficgen.config.toml for local runs, then edit environment-specific
+# values such as repo paths, Prometheus URL, and Nimbus host IP.
 
 [trace]
-# CSV trace to replay. Known traces live in datatrace/.
 file = "datatrace/day_night.csv"
-
-# Leave unset to replay the whole trace.
 # start_minute = 0
 # end_minute = 1439
 
+[cluster]
+namespace = "serverless"
+
 [traffic]
-# Replay one trace minute as 60 real seconds; there is no speedup setting.
+# Scale is global for every service in [[services]].
 scale = 0.3
-
-# Set true to print the schedule without sending HTTP requests.
 dry_run = false
-
-# Set for deterministic arrival offsets across repeated runs.
 # random_seed = 12345
 
-[target]
-# Base Knative Service name. With suffix routing enabled, this becomes
-# measure-yolo-001, measure-yolo-002, and so on.
+[system.repos]
+kscb = "../kube-startup-cpu-boost"
+knative = "../knative-serving"
+nimbus = "../nimbus"
+
+[system.kscb]
+namespace = "kube-startup-cpu-boost-system"
+
+[system.knative]
+namespace = "knative-serving"
+decide_url = "http://nimbus.knative-serving.svc.cluster.local:8080/decide"
+
+[system.nimbus]
+host_node = "master"
+host_ip = "<nimbus_host_ip>"
+service_namespace = "knative-serving"
+
+[[services]]
 service_base = "measure-yolo"
-
-# Optional map from trace function_id/app_name to service base names.
-# service_map_file = "service-map.json"
-
-namespace = "serverless"
+trace_apps = ["yolo_x_cpu"]
 path = "/detect/local"
-
-# URL template fields include service, service_base, namespace, path,
-# function_id, minute, arrival_offset_sec, request_index, and request_id.
 url_template = "http://{service}.{namespace}.svc.cluster.local{path}"
+ksvc_template = "generateKsvc/templates/measure-yolo.yaml"
+
+# auto = calculator uses max scaled RPS x assumed busy time.
+# Set an integer, for example 4, to intentionally cap clone count.
+alias_count = "auto"
+
+# Per-service CPU profile. These example values come from the current Nimbus
+# preload for measure-yolo; use different values for other services.
+cpu.cpu_budget_static = "1000m"
+cpu.c_opt_cold = "875m"
+cpu.c_opt_warm = "437m"
+cpu.c_min_cold = "500m"
+cpu.c_min_warm = "300m"
+
+nimbus.node_pool_selector = "nimbus.io/pool=serverless"
+nimbus.pre_measured_dir = "../nimbus/results/backup-tuned"
+
+# Example only: uncomment when a second trace app/service is ready.
+# [[services]]
+# service_base = "measure-web"
+# trace_apps = ["web_cpu"]
+# path = "/"
+# url_template = "http://{service}.{namespace}.svc.cluster.local{path}"
+# ksvc_template = "generateKsvc/templates/measure-web.yaml"
+# alias_count = "auto"
+# cpu.cpu_budget_static = "<measure_web_cpu_budget_static>"
+# cpu.c_opt_cold = "<measure_web_c_opt_cold>"
+# cpu.c_opt_warm = "<measure_web_c_opt_warm>"
+# cpu.c_min_cold = "<measure_web_c_min_cold>"
+# cpu.c_min_warm = "<measure_web_c_min_warm>"
+# nimbus.node_pool_selector = "<measure_web_node_pool_selector>"
+# nimbus.pre_measured_dir = "<measure_web_pre_measured_dir>"
 
 [routing]
-# true avoids routing a new request to an alias that is still processing.
-# This controls target service-name selection only. Matching cloned KServices
-# must exist before replay starts; configure that under [ksvc_aliases].
 increase_service = true
 suffix_template = "{service_base}-{index:03d}"
 request_timeout_sec = 300
 
-# Set this to model warm alias reuse with an assumed response duration.
-# If omitted, planning falls back to request_timeout_sec and becomes conservative.
-# IMPORTANT: this is only for clone-count planning. Keep request_timeout_sec
-# high enough for cold starts, but set this near expected p95 request lifetime
-# so alias planning does not assume every request occupies a pod for 300s.
+# Clone-count planning only. Defaults to request_timeout_sec if omitted, which
+# is conservative and can overestimate aliases.
 dry_run_assumed_service_time_sec = 30
-
-# Runtime safety cap for suffix routing. The experiment runner sets this
-# automatically from the computed alias count. Direct Locust runs can set it
-# here or with MAX_KSVC_ALIASES to wait for in-range aliases instead of calling
-# KServices that were not created.
 # max_aliases = 4
 
 [ksvc_aliases]
-# Optional KService alias preparation for `python -m traffic_generator experiment run`.
-# The experiment runner computes the clone count from the selected trace,
-# traffic scale, and assumed request busy time.
+# The runner inherits template/base/namespace from [[services]] and [cluster].
 enabled = true
-template = "generateKsvc/templates/measure-yolo.yaml"
 output_dir = "generated-ksvc"
-
-# Defaults align with [target].service_base and [routing].suffix_template.
-# base_name = "measure-yolo"
-# suffix_template = "{base}-{index:03d}"
-# namespace = "serverless"
-
-# When enabled and apply=true, the runner checks whether all expected aliases
-# already exist and skips generation/apply when they do.
 pull_images = false
 # nodes = "generateKsvc/nodes.json"
 create_namespace = true
 apply = true
 
 [request]
-# TrafficGenerator sends POST only.
 method = "POST"
-
-# Optional JSON file containing static request headers.
 # headers_file = "payloads/headers.json"
-
 request_id_header = "X-Trafficgen-Request-Id"
 include_request_id_in_body = true
 request_id_body_field = "request_id"
 content_type = "application/json"
-
-# Choose at most one body source. If none is set, the generator sends
-# {"request_id": <id>} as the minimal JSON body.
 # body = '{"image":"local"}'
 # body_file = "payloads/body.json"
 # body_template_file = "payloads/body.template.json"
@@ -101,9 +107,6 @@ log_response_body = true
 max_body_log_bytes = 65536
 
 [metrics]
-# Offline aggregation and plotting settings. Per-run experiment outputs are
-# written into results/<configuration>/<run-id>/. These shared directories are
-# used only when aggregating/plotting all discovered runs without --run-dir.
 results_dir = "results"
 output_dir = "results/metrics"
 plots_dir = "results/plots"

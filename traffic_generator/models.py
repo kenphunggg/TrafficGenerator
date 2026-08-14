@@ -39,6 +39,66 @@ class TargetConfig:
 
 
 @dataclass(frozen=True)
+class SystemReposConfig:
+    kscb: Path | None = None
+    knative: Path | None = None
+    nimbus: Path | None = None
+
+
+@dataclass(frozen=True)
+class SystemKscbConfig:
+    namespace: str = "kube-startup-cpu-boost-system"
+
+
+@dataclass(frozen=True)
+class SystemKnativeConfig:
+    namespace: str = "knative-serving"
+    decide_url: str = "http://nimbus.knative-serving.svc.cluster.local:8080/decide"
+
+
+@dataclass(frozen=True)
+class SystemNimbusConfig:
+    host_node: str | None = None
+    host_ip: str | None = None
+    service_namespace: str = "knative-serving"
+
+
+@dataclass(frozen=True)
+class SystemConfig:
+    repos: SystemReposConfig = field(default_factory=SystemReposConfig)
+    kscb: SystemKscbConfig = field(default_factory=SystemKscbConfig)
+    knative: SystemKnativeConfig = field(default_factory=SystemKnativeConfig)
+    nimbus: SystemNimbusConfig = field(default_factory=SystemNimbusConfig)
+
+
+@dataclass(frozen=True)
+class ServiceCpuConfig:
+    cpu_budget_static: str | None = None
+    c_opt_cold: str | None = None
+    c_opt_warm: str | None = None
+    c_min_cold: str | None = None
+    c_min_warm: str | None = None
+
+
+@dataclass(frozen=True)
+class ServiceNimbusConfig:
+    node_pool_selector: str | None = None
+    pre_measured_dir: Path | None = None
+
+
+@dataclass(frozen=True)
+class ServiceConfig:
+    service_base: str
+    trace_apps: tuple[str, ...] = ()
+    path: str | None = None
+    url_template: str | None = None
+    ksvc_template: Path | None = None
+    alias_count: int | None = None
+    cpu: ServiceCpuConfig = field(default_factory=ServiceCpuConfig)
+    nimbus: ServiceNimbusConfig = field(default_factory=ServiceNimbusConfig)
+
+
+@dataclass(frozen=True)
 class RoutingConfig:
     increase_service: bool = False
     suffix_template: str = "{service_base}-{index:03d}"
@@ -72,6 +132,8 @@ class ReplayConfig:
     trace: TraceConfig = field(default_factory=TraceConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
     target: TargetConfig = field(default_factory=TargetConfig)
+    services: tuple[ServiceConfig, ...] = ()
+    system: SystemConfig = field(default_factory=SystemConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     request: RequestConfig = field(default_factory=RequestConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)

@@ -19,10 +19,16 @@ For normal TrafficGenerator experiments, configure this through the central
 `trafficgen.config.toml` file instead of running this script separately:
 
 ```toml
+[cluster]
+namespace = "serverless"
+
+[[services]]
+service_base = "measure-yolo"
+ksvc_template = "generateKsvc/templates/measure-yolo.yaml"
+alias_count = "auto"
+
 [ksvc_aliases]
 enabled = true
-template = "generateKsvc/templates/measure-yolo.yaml"
-# count is computed by `python -m traffic_generator experiment run`
 output_dir = "generated-ksvc"
 pull_images = true
 nodes = "generateKsvc/nodes.json"
@@ -30,16 +36,23 @@ create_namespace = true
 apply = true
 ```
 
-Then run:
+The experiment runner computes the alias count from peak scaled RPS and assumed
+busy time unless `[[services]].alias_count` is set to an integer.
+
+Then run the automated comparison:
 
 ```bash
-python -m traffic_generator experiment run \
+python -m traffic_generator experiment compare \
   --config trafficgen.config.toml \
-  --configuration full-nimbus
+  --run-id rep-01 \
+  --yes \
+  --continue-on-failure
 ```
 
-The direct commands below are the manual equivalent of the `[ksvc_aliases]`
-section.
+`experiment compare` prepares aliases once before switching case state. It forces
+sequential alias waits even if no-wait flags are present, because the measurement
+needs every alias Ready and scaled to zero before traffic starts. The direct
+commands below are the manual equivalent of the `[ksvc_aliases]` section.
 
 ## Node Inventory
 
@@ -193,4 +206,5 @@ metadata:
 
 For TrafficGenerator suffix routing, the generated service names must match
 `routing.suffix_template` in `trafficgen.config.toml`. The number of generated
-services should match `[ksvc_aliases].count` in the same central config.
+services should match the experiment runner's planned alias count, which is
+computed automatically or overridden by `[[services]].alias_count`.

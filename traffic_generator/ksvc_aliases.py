@@ -45,16 +45,20 @@ def load_ksvc_alias_config(path: str | Path) -> KsvcAliasConfig:
     base_dir = config_path.parent if config_path.parent != Path("") else Path(".")
     aliases = _section(raw, "ksvc_aliases")
     target = _section(raw, "target")
+    cluster = _section(raw, "cluster")
     routing = _section(raw, "routing")
-    count = int(aliases.get("count", 0))
+    first_service = _first_service(raw)
+    count = _optional_count(aliases.get("count", first_service.get("alias_count", 0)))
     enabled = parse_bool(aliases.get("enabled", False))
 
     config = KsvcAliasConfig(
         enabled=enabled,
-        template=_optional_path(aliases.get("template"), base_dir),
+        template=_optional_path(aliases.get("template", first_service.get("ksvc_template")), base_dir),
         count=count,
         output_dir=_coerce_path(aliases.get("output_dir", "generated-ksvc"), base_dir),
-        base_name=_optional_str(aliases.get("base_name", target.get("service_base"))),
+        base_name=_optional_str(
+            aliases.get("base_name", target.get("service_base", first_service.get("service_base")))
+        ),
         suffix_template=str(
             aliases.get(
                 "suffix_template",
@@ -63,7 +67,9 @@ def load_ksvc_alias_config(path: str | Path) -> KsvcAliasConfig:
                 ),
             )
         ),
-        namespace=_optional_str(aliases.get("namespace", target.get("namespace"))),
+        namespace=_optional_str(
+            aliases.get("namespace", target.get("namespace", cluster.get("namespace")))
+        ),
         nodes=_optional_path(aliases.get("nodes"), base_dir),
         pull_images=parse_bool(aliases.get("pull_images", False)),
         create_namespace=parse_bool(aliases.get("create_namespace", False)),
@@ -78,7 +84,9 @@ def validate_ksvc_alias_config(config: KsvcAliasConfig) -> KsvcAliasConfig:
     if not config.enabled:
         return config
     if config.template is None:
-        raise ValueError("ksvc_aliases.template is required when aliases are enabled")
+        raise ValueError(
+            "ksvc_aliases.template or services.ksvc_template is required when aliases are enabled"
+        )
     if config.pull_images and config.nodes is None:
         raise ValueError("ksvc_aliases.nodes is required when pull_images = true")
     return config
@@ -207,6 +215,31 @@ def _optional_str(value: Any) -> str | None:
         return None
     stripped = str(value).strip()
     return stripped or None
+
+
+def _optional_count(value: Any) -> int:
+    if value is None or value == "":
+        return 0
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return 0
+    count = int(value)
+    if count < 0:
+        raise ValueError("ksvc alias count must be >= 0")
+    return count
+
+
+def _first_service(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    services = raw.get("services", [])
+    if services in (None, ""):
+        return {}
+    if not isinstance(services, list):
+        raise ValueError("config section [[services]] must be an array of tables")
+    if not services:
+        return {}
+    first = services[0]
+    if not isinstance(first, Mapping):
+        raise ValueError("config section [[services]] item 1 must be a table")
+    return first
 
 
 def _trafficgen_suffix_to_generator_suffix(template: str) -> str:

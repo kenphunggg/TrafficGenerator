@@ -87,10 +87,14 @@ def _build_metrics_config(
     root_raw: Mapping[str, Any],
 ) -> MetricsConfig:
     target = _section(root_raw, "target")
+    cluster = _section(root_raw, "cluster")
     prometheus = _section(raw, "prometheus")
+    first_service = _first_service(root_raw)
 
-    service_base_default = str(target.get("service_base", "measure-yolo"))
-    namespace_default = str(target.get("namespace", "serverless"))
+    service_base_default = str(
+        target.get("service_base", first_service.get("service_base", "measure-yolo"))
+    )
+    namespace_default = str(target.get("namespace", cluster.get("namespace", "serverless")))
     service_regex_default = f"{service_base_default}.*"
 
     labels = dict(DEFAULT_CONFIGURATION_LABELS)
@@ -151,3 +155,17 @@ def _optional_str(value: Any) -> str | None:
         return None
     stripped = str(value).strip()
     return stripped or None
+
+
+def _first_service(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    services = raw.get("services", [])
+    if services in (None, ""):
+        return {}
+    if not isinstance(services, list):
+        raise ValueError("metrics config section [[services]] must be an array of tables")
+    if not services:
+        return {}
+    first = services[0]
+    if not isinstance(first, Mapping):
+        raise ValueError("metrics config section [[services]] item 1 must be a table")
+    return first

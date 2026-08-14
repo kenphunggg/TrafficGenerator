@@ -20,9 +20,12 @@ class ServiceResolver:
 
     @classmethod
     def from_config(cls, config: ReplayConfig) -> "ServiceResolver":
-        service_map = None
+        service_map: dict[str, str] = {}
+        for service in config.services:
+            for trace_app in service.trace_apps:
+                service_map[trace_app] = service.service_base
         if config.target.service_map_file is not None:
-            service_map = load_service_map(config.target.service_map_file)
+            service_map.update(load_service_map(config.target.service_map_file))
         return cls(config.target.service_base, service_map)
 
     def resolve(self, function_id: str) -> str:

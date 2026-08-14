@@ -17,13 +17,14 @@ def collect_prometheus_samples(
     config: MetricsConfig,
     *,
     run_dir: str | Path | None = None,
+    run_id: str | None = None,
     timeout_sec: float = 30.0,
 ) -> list[Path]:
     if not config.prometheus_url:
         raise ValueError("prometheus.url is required for metrics collect")
 
     written: list[Path] = []
-    for run in discover_run_paths(config, run_dir=run_dir):
+    for run in discover_run_paths(config, run_dir=run_dir, run_id=run_id):
         start, end = run_time_window(run)
         records = list(_collect_run(config, run, start=start, end=end, timeout_sec=timeout_sec))
         run.path.mkdir(parents=True, exist_ok=True)

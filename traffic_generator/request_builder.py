@@ -23,9 +23,16 @@ class RequestBuilder:
         self._body_source = _BodySource(config)
 
     def build(self, event: RequestEvent, allocation: AliasAllocation) -> BuiltRequest:
-        context = _context(event, allocation, self.config)
+        service = _service_config(self.config, event.service_base)
+        path = service.path if service is not None and service.path else self.config.target.path
+        url_template = (
+            service.url_template
+            if service is not None and service.url_template
+            else self.config.target.url_template
+        )
+        context = _context(event, allocation, self.config, path=path)
         url = resolve_url(
-            render_template(self.config.target.url_template, context),
+            render_template(url_template, context),
             self.config.target.host,
         )
         headers = dict(self._headers)
@@ -105,12 +112,14 @@ def _context(
     event: RequestEvent,
     allocation: AliasAllocation,
     config: ReplayConfig,
+    *,
+    path: str,
 ) -> dict[str, Any]:
     return {
         "service": allocation.target_service,
         "service_base": event.service_base,
         "namespace": config.target.namespace,
-        "path": config.target.path,
+        "path": path,
         "function_id": event.function_id,
         "minute": event.trace_minute,
         "arrival_offset_sec": event.arrival_offset_sec,
@@ -120,6 +129,13 @@ def _context(
         "alias_index": allocation.alias_index,
         "alias_decision": allocation.decision,
     }
+
+
+def _service_config(config: ReplayConfig, service_base: str):
+    for service in config.services:
+        if service.service_base == service_base:
+            return service
+    return None
 
 
 def _load_headers(path: Path | None) -> dict[str, str]:

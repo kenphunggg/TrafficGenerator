@@ -3,9 +3,11 @@ from datetime import datetime
 from traffic_generator.experiment_cli import (
     build_locust_command,
     estimate_alias_demands,
+    planned_alias_count_for_demands,
+    service_alias_count_overrides,
     timestamp_run_id,
 )
-from traffic_generator.models import ReplayConfig, RoutingConfig, TargetConfig, TraceConfig, TraceRow, TrafficConfig
+from traffic_generator.models import ReplayConfig, RoutingConfig, ServiceConfig, TargetConfig, TraceConfig, TraceRow, TrafficConfig
 
 
 def test_timestamp_run_id_uses_date_and_time():
@@ -107,3 +109,64 @@ def test_run_experiment_writes_outputs_when_locust_fails(tmp_path, monkeypatch):
 
     assert experiment_cli.run_experiment(args) == 7
     assert calls == ["collect", "aggregate", "plot"]
+
+
+
+def test_post_traffic_outputs_handles_plot_interrupt(tmp_path, monkeypatch, capsys):
+    import argparse
+
+    from traffic_generator import experiment_cli
+    from traffic_generator.metrics_config import MetricsConfig
+
+    calls = []
+    args = argparse.Namespace(timeout_sec=30.0, skip_plot=False)
+    metrics_config = MetricsConfig(results_dir=tmp_path / "results")
+
+    monkeypatch.setattr(
+        experiment_cli,
+        "collect_prometheus_samples",
+        lambda *_args, **_kwargs: calls.append("collect") or [tmp_path / "prometheus_samples.jsonl"],
+    )
+    monkeypatch.setattr(
+        experiment_cli,
+        "aggregate_metrics",
+        lambda *_args, **_kwargs: calls.append("aggregate") or {"summary_metrics": tmp_path / "summary_metrics.csv"},
+    )
+
+    def interrupt_plot(*_args, **_kwargs):
+        calls.append("plot")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(experiment_cli, "plot_metrics", interrupt_plot)
+
+    code = experiment_cli._write_post_traffic_outputs(
+        args,
+        metrics_config,
+        run_dir=tmp_path,
+        run_id="run-interrupted",
+    )
+
+    assert code == 130
+    assert calls == ["collect", "aggregate", "plot"]
+    assert "plotting interrupted" in capsys.readouterr().err
+
+
+def test_service_alias_count_override_replaces_computed_demand():
+    config = ReplayConfig(
+        services=(ServiceConfig(service_base="measure-yolo", alias_count=4),),
+    )
+    demands = estimate_alias_demands(
+        [TraceRow(minute=0, function_id="measure-yolo", count=120)],
+        ReplayConfig(
+            traffic=TrafficConfig(scale=1.0),
+            target=TargetConfig(service_base="measure-yolo"),
+            routing=RoutingConfig(increase_service=True),
+        ),
+        assumed_service_time_sec=30,
+    )
+
+    overrides = service_alias_count_overrides(config)
+
+    assert demands[0].required_aliases == 60
+    assert overrides == {"measure-yolo": 4}
+    assert planned_alias_count_for_demands(demands, overrides) == 4

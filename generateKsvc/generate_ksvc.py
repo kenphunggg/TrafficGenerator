@@ -186,6 +186,7 @@ def run_main(args: argparse.Namespace) -> None:
     base_name = args.base_name or service_doc["metadata"]["name"]
     namespace = args.namespace or service_doc.get("metadata", {}).get("namespace", "default")
     images = sorted(extract_images(documents))
+    expected_image_tags = sorted({image_name_tag(image) for image in images})
     min_scale_one = template_min_scale_is_one(service_doc)
     wait_scale_zero = not args.no_wait_scale_zero
     if min_scale_one:
@@ -236,6 +237,7 @@ def run_main(args: argparse.Namespace) -> None:
                 path,
                 service_name=service_name,
                 namespace=namespace,
+                expected_image_tags=expected_image_tags,
                 kube_context=args.kube_context,
                 wait_ready=not args.no_wait_ready,
                 wait_scale_zero=wait_scale_zero,
@@ -513,6 +515,7 @@ def apply_service(
     *,
     service_name: str,
     namespace: str,
+    expected_image_tags: list[str],
     kube_context: str | None,
     wait_ready: bool,
     wait_scale_zero: bool,
@@ -521,6 +524,35 @@ def apply_service(
     poll_interval_sec: float,
     dry_run: bool,
 ) -> None:
+    existing_image_tags = None
+    if not dry_run:
+        existing_image_tags = get_existing_ksvc_image_tags(
+            service_name,
+            namespace=namespace,
+            kube_context=kube_context,
+        )
+    if existing_image_tags is not None and expected_image_tags == existing_image_tags:
+        print_step(
+            f"reuse_ksvc name={service_name} images={','.join(existing_image_tags)}"
+        )
+        if wait_scale_zero:
+            print_step(f"wait_scale_zero name={service_name}")
+            wait_for_scale_zero(
+                service_name,
+                namespace=namespace,
+                kube_context=kube_context,
+                timeout_sec=scale_zero_timeout_sec,
+                poll_interval_sec=poll_interval_sec,
+                dry_run=dry_run,
+            )
+        return
+    if existing_image_tags is not None:
+        print_warning(
+            f"ksvc {service_name} image mismatch; applying template "
+            f"expected={','.join(expected_image_tags) or '<none>'} "
+            f"existing={','.join(existing_image_tags) or '<none>'}"
+        )
+
     print_step(f"apply_ksvc name={service_name} file={path}")
     kubectl(["apply", "-f", str(path)], kube_context=kube_context, dry_run=dry_run)
 
@@ -550,6 +582,41 @@ def apply_service(
             poll_interval_sec=poll_interval_sec,
             dry_run=dry_run,
         )
+
+
+def get_existing_ksvc_image_tags(
+    service_name: str,
+    *,
+    namespace: str,
+    kube_context: str | None,
+) -> list[str] | None:
+    command = build_kubectl_command(
+        ["get", "ksvc", service_name, "-n", namespace, "-o", "json"],
+        kube_context=kube_context,
+    )
+    printable = " ".join(shell_quote(part) for part in command)
+    print_command(printable)
+    completed = subprocess.run(
+        command,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if completed.returncode != 0:
+        stderr = completed.stderr or ""
+        if "NotFound" in stderr or "not found" in stderr:
+            return None
+        raise KsvcGenerationError(
+            f"command failed with exit code {completed.returncode}: {printable}"
+        )
+    loaded = json.loads(completed.stdout)
+    images = extract_images(loaded.get("spec", {}).get("template", {}))
+    return sorted({image_name_tag(image) for image in images})
+
+
+def image_name_tag(image: str) -> str:
+    return image.split("@", 1)[0]
 
 
 def wait_for_scale_zero(

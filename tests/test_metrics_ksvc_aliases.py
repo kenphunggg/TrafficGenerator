@@ -140,3 +140,29 @@ apply = true
         "serverless",
         "measure-yolo-001",
     ]
+
+
+def test_load_ksvc_alias_config_inherits_first_service_defaults(tmp_path):
+    config_file = tmp_path / "trafficgen.config.toml"
+    config_file.write_text(
+        """
+[cluster]
+namespace = "serverless"
+
+[[services]]
+service_base = "measure-yolo"
+ksvc_template = "template.yaml"
+alias_count = 4
+
+[ksvc_aliases]
+enabled = true
+output_dir = "generated-ksvc"
+""".strip()
+    )
+
+    config = load_ksvc_alias_config(config_file)
+
+    assert config.base_name == "measure-yolo"
+    assert config.namespace == "serverless"
+    assert config.template == tmp_path / "template.yaml"
+    assert config.count == 4

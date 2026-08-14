@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from .metrics_config import MetricsConfig
-from .metrics_runs import RunPaths, discover_run_paths, parse_timestamp, read_jsonl
+from .metrics_runs import (
+    RunPaths,
+    aggregate_output_dir,
+    discover_run_paths,
+    parse_timestamp,
+    read_jsonl,
+)
 
 
 SUMMARY_FIELDS = [
@@ -113,9 +119,10 @@ def aggregate_metrics(
     config: MetricsConfig,
     *,
     run_dir: str | Path | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Path]:
-    runs = discover_run_paths(config, run_dir=run_dir)
-    output_dir = Path(run_dir) if run_dir is not None else config.output_dir
+    runs = discover_run_paths(config, run_dir=run_dir, run_id=run_id)
+    output_dir = aggregate_output_dir(config, run_dir=run_dir, run_id=run_id)
     output_dir.mkdir(parents=True, exist_ok=True)
     aggregations = [aggregate_run(config, run) for run in runs]
 

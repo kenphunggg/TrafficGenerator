@@ -67,3 +67,28 @@ actual_cpu_cores = "custom_cpu"
     assert config.service_base == "measure-yolo"
     assert config.service_regex == "measure-yolo.*"
     assert config.promql["actual_cpu_cores"] == "custom_cpu"
+
+
+def test_load_metrics_config_defaults_from_services_and_cluster(tmp_path):
+    config_file = tmp_path / "trafficgen.config.toml"
+    config_file.write_text(
+        """
+[cluster]
+namespace = "serverless"
+
+[[services]]
+service_base = "measure-yolo"
+
+[metrics]
+results_dir = "results"
+
+[metrics.prometheus]
+url = "http://prometheus.example"
+""".strip()
+    )
+
+    config = load_metrics_config(config_file)
+
+    assert config.namespace == "serverless"
+    assert config.service_base == "measure-yolo"
+    assert config.service_regex == "measure-yolo.*"

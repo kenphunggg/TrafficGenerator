@@ -10,6 +10,7 @@ from .metrics_aggregate import aggregate_metrics
 from .metrics_config import load_metrics_config
 from .metrics_plots import plot_metrics
 from .metrics_prometheus import collect_prometheus_samples
+from .metrics_runs import plot_output_dir, run_metrics_dir, run_plots_dir
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,11 +25,13 @@ def build_parser() -> argparse.ArgumentParser:
     collect = subparsers.add_parser("collect", help="Collect Prometheus samples for run dirs")
     collect.add_argument("--config", dest="command_config", help="Path to trafficgen.config.toml")
     collect.add_argument("--run-dir", help="Collect only this run directory")
+    collect.add_argument("--run-id", help="Collect only runs with this run ID")
     collect.add_argument("--timeout-sec", type=float, default=30.0, help="Prometheus HTTP timeout")
 
     aggregate = subparsers.add_parser("aggregate", help="Aggregate logs and Prometheus samples into CSVs")
     aggregate.add_argument("--config", dest="command_config", help="Path to trafficgen.config.toml")
     aggregate.add_argument("--run-dir", help="Aggregate only this run directory")
+    aggregate.add_argument("--run-id", help="Aggregate only runs with this run ID")
 
     plot = subparsers.add_parser("plot", help="Create thesis plots from aggregate CSVs")
     plot.add_argument("--config", dest="command_config", help="Path to trafficgen.config.toml")
@@ -40,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     all_cmd.add_argument("--config", dest="command_config", help="Path to trafficgen.config.toml")
     all_cmd.add_argument("--run-dir", help="Process only this run directory")
     all_cmd.add_argument("--timeout-sec", type=float, default=30.0, help="Prometheus HTTP timeout")
-    all_cmd.add_argument("--run-id", help="Run ID for representative timeline/distribution plots")
+    all_cmd.add_argument("--run-id", help="Process only this run ID and use it for representative plots")
     return parser
 
 
@@ -53,21 +56,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         paths = collect_prometheus_samples(
             config,
             run_dir=args.run_dir,
+            run_id=args.run_id,
             timeout_sec=args.timeout_sec,
         )
         _print_paths("wrote Prometheus samples", paths)
         return 0
 
     if args.command == "aggregate":
-        paths = aggregate_metrics(config, run_dir=args.run_dir)
+        paths = aggregate_metrics(config, run_dir=args.run_dir, run_id=args.run_id)
         _print_paths("wrote aggregate CSVs", paths.values())
         return 0
 
     if args.command == "plot":
+        input_dir = args.input or (run_metrics_dir(config, args.run_id) if args.run_id else None)
+        output_dir = args.output or (run_plots_dir(config, args.run_id) if args.run_id else None)
         paths = plot_metrics(
             config,
-            input_dir=args.input,
-            output_dir=args.output,
+            input_dir=input_dir,
+            output_dir=output_dir,
             run_id=args.run_id,
         )
         _print_paths("wrote plots", paths.values())
@@ -77,17 +83,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         sample_paths = collect_prometheus_samples(
             config,
             run_dir=args.run_dir,
+            run_id=args.run_id,
             timeout_sec=args.timeout_sec,
         )
         _print_paths("wrote Prometheus samples", sample_paths)
-        csv_paths = aggregate_metrics(config, run_dir=args.run_dir)
+        csv_paths = aggregate_metrics(config, run_dir=args.run_dir, run_id=args.run_id)
         _print_paths("wrote aggregate CSVs", csv_paths.values())
-        plot_input_dir = args.run_dir if args.run_dir is not None else None
-        plot_output_dir = args.run_dir if args.run_dir is not None else None
+        plot_input_dir = Path(csv_paths["summary_metrics"]).parent
         plot_paths = plot_metrics(
             config,
             input_dir=plot_input_dir,
-            output_dir=plot_output_dir,
+            output_dir=plot_output_dir(config, run_dir=args.run_dir, run_id=args.run_id),
             run_id=args.run_id,
         )
         _print_paths("wrote plots", plot_paths.values())

@@ -17,7 +17,6 @@ from typing import Any, Mapping, Sequence
 from .config import load_config
 from .ksvc_aliases import (
     KsvcAliasConfig,
-    all_ksvc_aliases_exist,
     build_generate_ksvc_command,
     load_ksvc_alias_config,
     with_ksvc_alias_count,
@@ -26,6 +25,7 @@ from .metrics_aggregate import aggregate_metrics
 from .metrics_config import load_metrics_config
 from .metrics_plots import plot_metrics
 from .metrics_prometheus import collect_prometheus_samples
+from .metrics_runs import case_run_dir
 from .models import ReplayConfig, TraceRow
 from .poisson import SECONDS_PER_TRACE_MINUTE, scale_count
 from .replay import selected_rows
@@ -94,6 +94,42 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--skip-cluster-capacity-check", action="store_true", help="Do not query kubectl for a best-effort CPU capacity check")
     run.add_argument("--skip-plot", action="store_true", help="Collect and aggregate, but do not plot")
     run.add_argument("--dry-run", action="store_true", help="Print the run plan without applying aliases or running Locust")
+
+    compare = subparsers.add_parser(
+        "compare",
+        help="Switch cluster state, run static/fixed/full cases, aggregate, and plot",
+    )
+    compare.add_argument(
+        "--config",
+        default=None,
+        help="Central trafficgen.config.toml containing replay, metrics, and alias settings",
+    )
+    compare.add_argument("--run-id", help="Shared run folder name for all cases")
+    compare.add_argument(
+        "--cases",
+        nargs="+",
+        default=["static-knative", "fixed-boost", "full-nimbus"],
+        help="Cases to run in order; default: static-knative fixed-boost full-nimbus",
+    )
+    compare.add_argument("--users", "-u", type=int, default=1, help="Locust user count")
+    compare.add_argument("--spawn-rate", "-r", type=float, default=1.0, help="Locust spawn rate")
+    compare.add_argument("--timeout-sec", type=float, default=30.0, help="Prometheus HTTP timeout")
+    compare.add_argument(
+        "--assumed-service-time-sec",
+        type=float,
+        help="Seconds each request is assumed to occupy one alias for clone-count calculation",
+    )
+    compare.add_argument("--yes", "-y", action="store_true", help="Run without the confirmation prompt")
+    compare.add_argument("--verbose", action="store_true", help="Print kubectl and traffic commands")
+    compare.add_argument("--no-color", action="store_true", help="Disable colored terminal output")
+    compare.add_argument("--dry-run", action="store_true", help="Print state changes and run plans without applying or sending traffic")
+    compare.add_argument("--skip-alias-prepare", action="store_true", help="Assume aliases already exist")
+    compare.add_argument("--skip-crd-apply", action="store_true", help="Do not apply Nimbus/KSCB CRDs before switching cases")
+    compare.add_argument("--skip-nimbus-service", action="store_true", help="Do not apply nimbus/config/nimbus-service.yaml for full-nimbus")
+    compare.add_argument("--skip-cluster-capacity-check", action="store_true", help="Do not query kubectl for the per-run capacity preflight")
+    compare.add_argument("--skip-per-run-plot", action="store_true", help="Skip per-case plots; final comparison plots are still written")
+    compare.add_argument("--continue-on-failure", action="store_true", help="Continue remaining cases after a traffic failure")
+    compare.add_argument("--state-wait-timeout-sec", type=float, default=300.0, help="Timeout for KService scale-to-zero and Nimbus apply waits")
     return parser
 
 
@@ -101,6 +137,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "run":
         return run_experiment(args)
+    if args.command == "compare":
+        from .scenario_compare import run_compare
+
+        return run_compare(args)
     raise AssertionError(f"unknown experiment command: {args.command}")
 
 
@@ -119,22 +159,24 @@ def run_experiment(args: argparse.Namespace) -> int:
         service_resolver=ServiceResolver.from_config(replay_config),
     )
     computed_alias_count = max((demand.required_aliases for demand in demands), default=0)
+    alias_overrides = service_alias_count_overrides(replay_config)
+    planned_alias_count = planned_alias_count_for_demands(demands, alias_overrides)
 
-    if alias_config.enabled and computed_alias_count > 0:
-        alias_config = with_ksvc_alias_count(alias_config, computed_alias_count)
+    if alias_config.enabled and planned_alias_count > 0:
+        alias_config = with_ksvc_alias_count(alias_config, planned_alias_count)
 
     alias_command = (
         []
-        if args.skip_alias_prepare or not alias_config.enabled or computed_alias_count < 1
+        if args.skip_alias_prepare or not alias_config.enabled or planned_alias_count < 1
         else build_generate_ksvc_command(alias_config)
     )
     cluster_capacity = check_cluster_capacity(
         alias_config,
-        computed_alias_count,
-        skip=args.skip_cluster_capacity_check or computed_alias_count < 1,
+        planned_alias_count,
+        skip=args.skip_cluster_capacity_check or planned_alias_count < 1,
     )
     run_id = args.run_id or timestamp_run_id()
-    run_dir = (metrics_config.results_dir / args.configuration / run_id).resolve()
+    run_dir = case_run_dir(metrics_config, args.configuration, run_id).resolve()
 
     locust_command = build_locust_command(
         trafficgen_config=central_config,
@@ -143,8 +185,8 @@ def run_experiment(args: argparse.Namespace) -> int:
     )
     env = os.environ.copy()
     env["LOG_DIR"] = str(run_dir)
-    if replay_config.routing.increase_service and computed_alias_count > 0:
-        env["MAX_KSVC_ALIASES"] = str(computed_alias_count)
+    if replay_config.routing.increase_service and planned_alias_count > 0:
+        env["MAX_KSVC_ALIASES"] = str(planned_alias_count)
 
     _print_run_plan(
         args,
@@ -154,11 +196,13 @@ def run_experiment(args: argparse.Namespace) -> int:
         run_dir=run_dir,
         demands=demands,
         computed_alias_count=computed_alias_count,
+        planned_alias_count=planned_alias_count,
+        alias_overrides=alias_overrides,
         alias_config=alias_config,
         alias_command=alias_command,
         cluster_capacity=cluster_capacity,
         locust_command=locust_command,
-        runtime_alias_limit=computed_alias_count if replay_config.routing.increase_service else 0,
+        runtime_alias_limit=planned_alias_count if replay_config.routing.increase_service else 0,
     )
 
     if args.dry_run:
@@ -168,12 +212,9 @@ def run_experiment(args: argparse.Namespace) -> int:
         return 1
 
     if alias_command:
-        if all_ksvc_aliases_exist(alias_config):
-            print("KService aliases already exist; skipping alias preparation")
-        else:
-            completed = subprocess.run(alias_command, check=False)  # noqa: S603 - fixed executable/args.
-            if completed.returncode != 0:
-                return completed.returncode
+        completed = subprocess.run(alias_command, check=False)  # noqa: S603 - fixed executable/args.
+        if completed.returncode != 0:
+            return completed.returncode
 
     run_dir.mkdir(parents=True, exist_ok=True)
     traffic_returncode = 0
@@ -197,6 +238,26 @@ def run_experiment(args: argparse.Namespace) -> int:
         run_id=run_id,
     )
     return traffic_returncode or output_returncode
+
+
+def service_alias_count_overrides(config: ReplayConfig) -> dict[str, int]:
+    return {
+        service.service_base: service.alias_count
+        for service in config.services
+        if service.alias_count is not None
+    }
+
+
+def planned_alias_count_for_demands(
+    demands: Sequence[AliasDemand],
+    alias_overrides: Mapping[str, int],
+) -> int:
+    if not demands:
+        return 0
+    return max(
+        alias_overrides.get(demand.service_base, demand.required_aliases)
+        for demand in demands
+    )
 
 
 def estimate_alias_demands(
@@ -349,6 +410,8 @@ def _print_run_plan(
     run_dir: Path,
     demands: Sequence[AliasDemand],
     computed_alias_count: int,
+    planned_alias_count: int,
+    alias_overrides: Mapping[str, int],
     alias_config: KsvcAliasConfig,
     alias_command: Sequence[str],
     cluster_capacity: ClusterCapacityCheck,
@@ -367,23 +430,41 @@ def _print_run_plan(
         _print_kv("Scale", str(config.traffic.scale), color=color)
 
     print(_style("KServices", Colors.BOLD, color=color))
-    if computed_alias_count > 0:
-        range_text = _alias_range(alias_config, computed_alias_count)
+    if planned_alias_count > 0:
+        range_text = _alias_range(alias_config, planned_alias_count)
         if range_text:
-            _print_status("create", f"{computed_alias_count} aliases ({range_text})", color=color)
+            _print_status("create", f"{planned_alias_count} aliases ({range_text})", color=color)
         else:
-            _print_status("create", f"{computed_alias_count} aliases", color=color)
+            _print_status("create", f"{planned_alias_count} aliases", color=color)
+        if planned_alias_count != computed_alias_count:
+            _print_status(
+                "override",
+                f"using {planned_alias_count} aliases; calculator estimated {computed_alias_count}",
+                color=color,
+            )
     else:
         _print_status("none", "suffix routing disabled or no scheduled traffic", color=color)
 
     for demand in demands:
-        _print_detail(
-            "demand",
-            (
+        override = alias_overrides.get(demand.service_base)
+        if override is None:
+            demand_text = (
                 f"{demand.service_base}: peak {_format_number(demand.peak_scaled_rps)} rps "
                 f"x {_format_number(demand.assumed_service_time_sec)}s -> "
                 f"{demand.required_aliases} aliases"
-            ),
+            )
+        else:
+            note = ""
+            if override < demand.required_aliases:
+                note = "; below computed demand, so routing may wait/reuse warm aliases"
+            demand_text = (
+                f"{demand.service_base}: peak {_format_number(demand.peak_scaled_rps)} rps "
+                f"x {_format_number(demand.assumed_service_time_sec)}s -> "
+                f"computed {demand.required_aliases}, configured {override}{note}"
+            )
+        _print_detail(
+            "demand",
+            demand_text,
             color=color,
         )
         _print_detail(
@@ -415,7 +496,7 @@ def _print_run_plan(
         _print_status("manual", "aliases must already exist; [ksvc_aliases].enabled is false", color=color)
     elif alias_command:
         action = "apply" if alias_config.apply else "generate"
-        _print_status(action, f"{computed_alias_count} aliases, then run traffic", color=color)
+        _print_status(action, f"{planned_alias_count} aliases, then run traffic", color=color)
     else:
         _print_status("run", "traffic only", color=color)
     if runtime_alias_limit > 0:
@@ -450,6 +531,9 @@ def _write_post_traffic_outputs(
             timeout_sec=args.timeout_sec,
         )
         _print_paths("wrote Prometheus samples", sample_paths)
+    except KeyboardInterrupt:
+        _print_warning("Prometheus collection interrupted; stopping output phase")
+        return 130
     except Exception as exc:  # noqa: BLE001 - keep partial-run output moving.
         returncode = 1
         _print_warning(f"Prometheus collection failed; continuing with log-only metrics: {exc}")
@@ -457,6 +541,9 @@ def _write_post_traffic_outputs(
     try:
         csv_paths = aggregate_metrics(metrics_config, run_dir=run_dir)
         _print_paths("wrote aggregate CSVs", csv_paths.values())
+    except KeyboardInterrupt:
+        _print_warning("metrics aggregation interrupted; plots were skipped")
+        return 130
     except Exception as exc:  # noqa: BLE001 - report why plots cannot be produced.
         _print_warning(f"metrics aggregation failed; plots were skipped: {exc}")
         return 1
@@ -472,6 +559,9 @@ def _write_post_traffic_outputs(
             run_id=run_id,
         )
         _print_paths("wrote plots", plot_paths.values())
+    except KeyboardInterrupt:
+        _print_warning("plotting interrupted; Prometheus samples and aggregate CSVs were written")
+        return 130
     except Exception as exc:  # noqa: BLE001 - surface plotting failures without hiding traffic failures.
         _print_warning(f"plotting failed: {exc}")
         returncode = 1
