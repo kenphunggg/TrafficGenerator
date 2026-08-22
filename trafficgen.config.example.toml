@@ -132,6 +132,6 @@ pending_pods = 'sum(kube_pod_status_phase{namespace="$namespace",phase="Pending"
 allocated_cpu_cores = 'sum(kube_pod_container_resource_requests{namespace="$namespace",resource="cpu",pod=~"$service_regex"})'
 actual_cpu_cores = 'sum(rate(container_cpu_usage_seconds_total{namespace="$namespace",pod=~"$service_regex",container!="",container!="POD"}[1m]))'
 
-# Optional. Leave blank until Nimbus exports stable mode/tier metrics.
+# Optional. New Nimbus status tier is adaptive_cpu; leave blank until exported as metrics.
 nimbus_mode = ""
 nimbus_tier = ""

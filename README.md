@@ -164,6 +164,14 @@ spec:
       bodyContains: '"success":true'
 ```
 
+For the new Nimbus online design, `online.enabled` is the only
+TrafficGenerator-set online switch. TrafficGenerator does not emit `policy`,
+`placementPolicy`, `reserveRatio`, or adaptive-CPU knobs. Nimbus computes
+`adaptive_cpu` cold CPU from the loaded profile and live pool headroom, keeps
+the KService `nodeSelector` at the pool selector, and lets Kubernetes choose
+the concrete node. `.status.online.assignments[].node` is usually the pool
+label value rather than a hostname; `degraded=true` means Nimbus used the
+adaptive floor fallback or reported Pending.
 
 ## Outputs
 

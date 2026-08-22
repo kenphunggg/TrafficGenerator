@@ -1,7 +1,7 @@
 import csv
 
 from traffic_generator.metrics_config import MetricsConfig
-from traffic_generator.metrics_plots import _visible_boxplot_ylim, plot_metrics
+from traffic_generator.metrics_plots import _tier_marker, _visible_boxplot_ylim, plot_metrics
 
 
 def test_plot_metrics_creates_pngs(tmp_path):
@@ -98,3 +98,11 @@ def test_visible_boxplot_ylim_ignores_hidden_fliers():
 
     assert ymin == 0
     assert ymax < 5000
+
+
+def test_tier_marker_supports_current_and_historical_nimbus_tiers():
+    assert _tier_marker("adaptive_cpu") == "^"
+    assert _tier_marker("c_min") == "o"
+    assert _tier_marker("best_fit") == "s"
+    assert _tier_marker("pending") == "x"
+    assert _tier_marker("") is None

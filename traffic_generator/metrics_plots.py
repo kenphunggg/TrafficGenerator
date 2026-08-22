@@ -22,6 +22,13 @@ CONFIG_COLORS = {
     "Full Nimbus": "#dc2626",
 }
 
+NIMBUS_TIER_MARKERS = {
+    "adaptive_cpu": "^",
+    "c_min": "o",
+    "best_fit": "s",
+    "pending": "x",
+}
+
 
 def plot_metrics(
     config: MetricsConfig,
@@ -325,8 +332,8 @@ def plot_timeline(
         )
     for row in reference_rows:
         tier = str(row.get("nimbus_tier", ""))
-        if tier in {"c_min", "best_fit", "pending"}:
-            marker = {"c_min": "o", "best_fit": "s", "pending": "x"}[tier]
+        marker = _tier_marker(tier)
+        if marker:
             axes[3].scatter(
                 _float(row.get("minute")) or 0.0,
                 _float(row.get("allocated_cpu_cores")) or 0.0,
@@ -344,6 +351,10 @@ def plot_timeline(
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(output_path, dpi=180)
     plt.close(fig)
+
+
+def _tier_marker(tier: str) -> str | None:
+    return NIMBUS_TIER_MARKERS.get(tier)
 
 
 def plot_latency_distribution(
